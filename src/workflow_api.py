@@ -35,7 +35,7 @@ def create_app(settings=None, workflow_service=None):
         version="4.0.0",
         lifespan=lifespan)
 
-    def require_admin_token(request, authorization=Header(default=None)):
+    def require_admin_token(request: Request, authorization: str | None = Header(default=None)):
         resolved_settings = settings
         if resolved_settings is None:
             from src.config import load_settings
@@ -52,7 +52,7 @@ def create_app(settings=None, workflow_service=None):
         return {"status": "ok", "stage": 4, "orchestrator": "langgraph"}
 
     @app.post("/workflows", status_code=status.HTTP_201_CREATED)
-    def start_workflow(payload, request):
+    def start_workflow(payload: WorkflowStartRequest, request: Request):
         return request.app.state.workflow_service.start(
             message=payload.message,
             session_id=payload.session_id,
@@ -61,7 +61,7 @@ def create_app(settings=None, workflow_service=None):
     @app.post(
         "/workflows/{workflow_id}/admin-decision",
         dependencies=[Depends(require_admin_token)])
-    def resume_workflow(workflow_id, payload, request):
+    def resume_workflow(workflow_id: str, payload: WorkflowDecisionRequest, request: Request):
         try:
             return request.app.state.workflow_service.resume_admin(
                 workflow_id,
@@ -73,15 +73,15 @@ def create_app(settings=None, workflow_service=None):
     @app.post(
         "/workflows/{workflow_id}/retry",
         dependencies=[Depends(require_admin_token)])
-    def retry_workflow(workflow_id, request):
+    def retry_workflow(workflow_id: str, request: Request):
         return request.app.state.workflow_service.retry(workflow_id)
 
     @app.get("/workflows/{workflow_id}")
-    def get_workflow(workflow_id, request):
+    def get_workflow(workflow_id: str, request: Request):
         return request.app.state.workflow_service.get_state(workflow_id)
 
     @app.get("/workflows/{workflow_id}/history")
-    def get_history(workflow_id, request):
+    def get_history(workflow_id: str, request: Request):
         return request.app.state.workflow_service.get_history(workflow_id)
 
     return app

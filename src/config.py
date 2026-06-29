@@ -95,7 +95,7 @@ def load_settings():
             "http://127.0.0.1:8000").rstrip("/"),
         admin_api_token=_require("ADMIN_API_TOKEN"),
         admin_api_timeout_seconds=float(
-            os.getenv("ADMIN_API_TIMEOUT_SECONDS", "10"))
+            os.getenv("ADMIN_API_TIMEOUT_SECONDS", "10")),
         mcp_server_url=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8001/mcp").rstrip("/"),
         mcp_access_token=os.getenv("MCP_ACCESS_TOKEN", ""),
         mcp_jwt_secret=_require("MCP_JWT_SECRET"),

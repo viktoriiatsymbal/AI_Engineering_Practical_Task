@@ -354,12 +354,18 @@ class ParkingChatbot:
             "start a new reservation")
         return any(phrase in message for phrase in phrases)
 
-    def handle_message(self, message, session_id="default"):
+    def process_message(self, message, session_id="default"):
         result = self.graph.invoke(
-            {
-                "message": message,
-                "session_id": session_id})
-        return result["response"]
+            {"message": message, "session_id": session_id})
+        return {
+            "response": result["response"],
+            "reservation_id": result.get("reservation_id"),
+            "slots": result.get("slots")}
+
+    def handle_message(self, message, session_id="default"):
+        return self.process_message(
+            message=message,
+            session_id=session_id)["response"]
 
     def close(self):
         if self.admin_client is not None:

@@ -55,7 +55,7 @@ def create_app(settings=None, database=None, admin_agent=None):
         version="2.0.0",
         lifespan=lifespan)
 
-    def require_token(request, authorization=Header(default=None)):
+    def require_token(request: Request, authorization: str | None = Header(default=None)):
         expected = f"Bearer {request.app.state.settings.admin_api_token}"
         if authorization != expected:
             raise HTTPException(
@@ -70,7 +70,7 @@ def create_app(settings=None, database=None, admin_agent=None):
         "/admin/requests",
         dependencies=[Depends(require_token)],
         status_code=status.HTTP_201_CREATED)
-    def submit_request(payload, request):
+    def submit_request(payload: ReservationEscalationRequest, request: Request):
         database = request.app.state.database
         try:
             existing = database.get_admin_review(
@@ -89,7 +89,7 @@ def create_app(settings=None, database=None, admin_agent=None):
     @app.get(
         "/admin/requests",
         dependencies=[Depends(require_token)])
-    def list_requests(request, review_state=None):
+    def list_requests(request: Request, review_state: str | None = None):
         return request.app.state.database.list_admin_reviews(
             state=review_state)
 
@@ -108,7 +108,7 @@ def create_app(settings=None, database=None, admin_agent=None):
     @app.post(
         "/admin/commands",
         dependencies=[Depends(require_token)])
-    def propose_action(payload, request):
+    def propose_action(payload: AdminCommandRequest, request: Request):
         database = request.app.state.database
         review = database.get_admin_review(payload.reservation_id)
         if review is None:
@@ -129,7 +129,7 @@ def create_app(settings=None, database=None, admin_agent=None):
     @app.post(
         "/admin/decisions",
         dependencies=[Depends(require_token)])
-    def review_action(payload, request):
+    def review_action(payload: HITLDecisionRequest, request: Request):
         try:
             result = request.app.state.admin_agent.resume(
                 thread_id=payload.thread_id,
