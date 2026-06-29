@@ -33,8 +33,13 @@ class Settings:
 
     max_reservation_hours: int
 
+    admin_api_url: str
+    admin_api_token: str
+    admin_api_timeout_seconds: float
+
     @property
     def postgres_dsn(self):
+        """SQLAlchemy DSN used by the Stage 1/2 application database."""
         return URL.create(
             drivername="postgresql+psycopg2",
             username=self.postgres_user,
@@ -43,6 +48,19 @@ class Settings:
             port=self.postgres_port,
             database=self.postgres_db,
             query={"sslmode": self.postgres_sslmode})
+
+    @property
+    def postgres_checkpoint_dsn(self) -> str:
+        """psycopg3 DSN required by LangGraph's persistent PostgresSaver."""
+        url = URL.create(
+            drivername="postgresql",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+            query={"sslmode": self.postgres_sslmode})
+        return url.render_as_string(hide_password=False)
 
 def load_settings():
     return Settings(
@@ -61,4 +79,10 @@ def load_settings():
         postgres_password=_require("POSTGRES_PASSWORD"),
         postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "require"),
         max_reservation_hours=int(
-            os.getenv("MAX_RESERVATION_HOURS", "24")))
+            os.getenv("MAX_RESERVATION_HOURS", "24")),
+        admin_api_url=os.getenv(
+            "ADMIN_API_URL",
+            "http://127.0.0.1:8000").rstrip("/"),
+        admin_api_token=_require("ADMIN_API_TOKEN"),
+        admin_api_timeout_seconds=float(
+            os.getenv("ADMIN_API_TIMEOUT_SECONDS", "10")))

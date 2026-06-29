@@ -1,44 +1,48 @@
-# AI_Engineering_Practical_Task (Stage 1)
+# AI_Engineering_Practical_Task (Stage 2)
 
-Stage 1 implements a parking assistant using RAG. It answers questions about the parking facility, collects reservation details, protects sensitive data, and evaluates retrieval quality and response latency.
+Stage 2 extends the Stage 1 RAG chatbot with a LangChain administrator agent and a human-in-the-loop approval workflow
 
-## Features
+## Implemented functionality
 
-- RAG-based answers using LangChain and OpenAI models
-- Static parking information stored in Weaviate
-- Dynamic availability, prices, working hours, and reservations stored in PostgreSQL
-- Interactive reservation data collection
-- Reservation validation for names, car numbers, dates, duration, opening hours, availability, and booking conflicts
-- PII detection and redaction using Microsoft Presidio and LangChain middleware
-- Retrieval and performance evaluation
-- Automated tests with pytest
+- RAG chatbot for parking information and reservation data collection
+- Weaviate for static knowledge and PostgreSQL for dynamic data
+- PII guardrails with Presidio
+- Automatic escalation of completed reservation requests to the administrator API
+- LangChain administrator agent with approve/refuse tools
+- Human confirmation before any reservation status change
+- Persistent workflow state with LangGraph `PostgresSaver`
+- Token-protected REST API and administrator CLI
+- Automated tests and workflow evaluation
 
-## Architecture
+## Workflow
 
 ```text
-User
-->
-  LangGraph chatbot
-    ├── Information request -> Weaviate static data + PostgreSQL live data -> RAG answer
-    └── Reservation request -> slot collection -> validation -> PostgreSQL reservation
-
-Guardrails are applied during data ingestion and answer generation
+User -> RAG chatbot -> reservation created -> administrator API
+     -> LangChain admin agent -> human confirmation -> approved/refused
 ```
 
-## Data storage
+The administrator agent cannot change reservation data directly. It proposes either `approve_reservation` or `refuse_reservation`, and the action is executed only after explicit human confirmation
 
-- Weaviate: general info, location, parking details, policies, and booking instructions
-- PostgreSQL: parking availability, prices, working hours, and reservations
-
-## Project structure
+## Project structure (added/changed files)
 
 ```text
-src/                    # application code
-data/                   # static and dynamic seed data
-evaluation/             # evaluation scripts and generated reports
-tests/                  # automated tests
-.env.example            # required env variables
-requirements.txt        # python dependencies
+src/
+├── admin_agent.py      # LangChain agent and HITL middleware
+├── admin_api.py        # protected administrator REST API
+├── admin_cli.py        # administrator console
+├── admin_client.py     # chatbot-to-admin API integration
+├── admin_tools.py      # approve/refuse tools
+├── chatbot.py          # stage 1 chatbot with escalation
+└── database.py         # reservations and review persistence
+
+data/
+└── stage2_migration.sql
+
+evaluation/
+├── eval_admin_workflow.py
+└── results/
+
+tests/
 ```
 
 ## Setup
@@ -63,77 +67,111 @@ python -m spacy download en_core_web_lg
 cp .env.example .env
 ```
 
-Fill the OpenAI, Weaviate Cloud, and PostgreSQL credentials in `.env`.
+Fill the credentials in `.env`.
 
-### 4. Seed PostgreSQL and ingest static data into Weaviate
+### 4. Initialise data
 
 ```bash
 python -m src.ingest
 ```
 
-To recreate the Weaviate collection before ingestion:
+For an existing Stage 1 database, apply the Stage 2 migration:
 
 ```bash
-python -m src.ingest --reset
+psql "$DATABASE_URL" -f data/stage2_migration.sql
 ```
 
-## Usage
+## Running the application
 
-Run the chatbot:
+Start the administrator API:
+
+```bash
+uvicorn src.admin_api:app --host 127.0.0.1 --port 8000
+```
+
+Start the user chatbot in another terminal:
 
 ```bash
 python -m src.main
 ```
 
-Example reservation flow:
+Start the administrator console in a third terminal:
 
-```text
-I want to reserve a parking space
-Anna
-Ponomarenko
-AA1234BB
-2026-07-10 10:00
-2026-07-10 12:00
+```bash
+python -m src.admin_cli
 ```
 
-The reservation is stored in PostgreSQL with `pending` status. Administrator approval is implemented in Stage 2.
+Administrator commands:
+
+```text
+list
+list pending
+list all
+open <reservation-id>
+quit
+```
+
+## API endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Service health check |
+| `POST` | `/admin/requests` | Escalate a reservation |
+| `GET` | `/admin/requests` | List review requests |
+| `GET` | `/admin/requests/{reservation_id}` | Read one request |
+| `POST` | `/admin/commands` | Ask the agent to propose approve/refuse |
+| `POST` | `/admin/decisions` | Confirm or reject the proposed action |
+
+Administrator endpoints require:
+
+```http
+Authorization: Bearer <ADMIN_API_TOKEN>
+```
 
 ## Evaluation
 
-Generate the Stage 1 evaluation report:
+Run the Stage 2 workflow evaluation while the administrator API is running:
 
 ```bash
-python -m evaluation.generate_report
+python -m evaluation.eval_admin_workflow
 ```
 
-Generated artifacts:
-
-- [`evaluation/results/evaluation_report.md`](evaluation/results/evaluation_report.md)
-- [`evaluation/results/evaluation_results.json`](evaluation/results/evaluation_results.json)
-
-Latest results:
+Recorded result:
 
 | Metric | Result |
 |---|---:|
-| Labelled retrieval queries | 7 |
-| Recall@3 | 1.000 |
-| Precision@3 | 0.333 |
-| Successful performance requests | 15/15 |
-| Mean retrieval latency | 0.263 s |
-| Mean full-answer latency | 3.170 s |
+| Runs attempted | 3 |
+| Runs successful | 3 |
+| Success rate | 100% |
+| Mean escalation latency | 1.451 s |
+| Mean agent proposal latency | 4.296 s |
+| Mean HITL resume latency | 3.666 s |
+
+Raw results are stored in:
+
+```text
+evaluation/results/admin_workflow_results.json
+```
+
+Stage 1 RAG evaluation remains available in:
+
+```text
+evaluation/results/evaluation_report.md
+evaluation/results/evaluation_results.json
+```
 
 ## Tests
-
-Run all tests:
 
 ```bash
 python -m pytest -v
 ```
 
-The Stage 1 test suite contains 43 tests covering the chatbot, database, guardrails, RAG chain, reservation validation, vector storage, and evaluation logic.
+The test suite covers the chatbot, database, RAG, guardrails, administrator API, client, tools, CLI, persistent HITL agent and end-to-end approve/refuse flows.
 
 ## Security
 
-- Sensitive data is redacted before static documents are stored in Weaviate
-- User input and generated answers pass through PII middleware
-- Secrets are loaded from `.env` and must not be committed to Git
+- Administrator endpoints require a bearer token
+- Secrets are loaded from `.env` and must not be committed
+- Side-effecting administrator tools require explicit human confirmation
+- Reservation IDs and data are validated against PostgreSQL instead of being generated by the agent
+- PII filtering from Stage 1 remains enabled

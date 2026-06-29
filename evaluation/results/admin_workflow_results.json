@@ -1,0 +1,21 @@
+{
+  "runs_attempted": 3,
+  "runs_successful": 3,
+  "success_rate_percent": 100.0,
+  "request_escalation_latency": {
+    "mean_seconds": 1.4510525696290035,
+    "p50_seconds": 1.4280601249774918,
+    "max_seconds": 1.5046165839303285
+  },
+  "admin_agent_proposal_latency": {
+    "mean_seconds": 4.296092694353622,
+    "p50_seconds": 3.789962458075024,
+    "max_seconds": 5.360613582888618
+  },
+  "resume_latency": {
+    "mean_seconds": 3.6663850830324614,
+    "p50_seconds": 2.720212916028686,
+    "max_seconds": 5.916526916087605
+  },
+  "failures": []
+}

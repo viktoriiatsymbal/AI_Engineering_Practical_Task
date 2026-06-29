@@ -1,27 +1,38 @@
 """
-Entrypoint to talk to the chatbot
+Entrypoint to talk to the chatbot with escalation enabled
 """
+from src.admin_client import AdminClient
+from src.chatbot import ParkingChatbot
 from src.config import load_settings
 from src.database import Database
 from src.guardrails import GuardRails
 from src.rag_chain import RAGChain
 from src.vector_store import StaticKnowledgeBase, connect
-from src.chatbot import ParkingChatbot
 
 def build_chatbot():
     settings = load_settings()
     guardrails = GuardRails()
-    db = Database(settings=settings)
+    database = Database(settings=settings)
     client = connect(settings)
-    kb = StaticKnowledgeBase(client, settings)
-    rag = RAGChain(settings, kb, db, guardrails)
-    bot = ParkingChatbot(settings, rag, db, guardrails)
+    knowledge_base = StaticKnowledgeBase(client, settings)
+    rag = RAGChain(
+        settings,
+        knowledge_base,
+        database,
+        guardrails)
+    admin_client = AdminClient(
+        base_url=settings.admin_api_url,
+        token=settings.admin_api_token,
+        timeout_seconds=settings.admin_api_timeout_seconds)
+    bot = ParkingChatbot(
+        settings,
+        rag,
+        database,
+        guardrails,
+        admin_client=admin_client)
     return bot, client
 
 def main():
-    '''
-    Main function to run the chatbot in an interactive loop
-    '''
     bot, client = build_chatbot()
     print("CityPark assistant ready. Type 'exit' to quit.")
     try:
@@ -31,9 +42,9 @@ def main():
                 break
             if not message:
                 continue
-            response = bot.handle_message(message)
-            print(f"bot: {response}")
+            print(f"bot: {bot.handle_message(message)}")
     finally:
+        bot.close()
         client.close()
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-Conversation orchestration for information requests and parking reservations
+Conversation orchestration for info requests and parking reservations
 """
 import re
 from datetime import datetime
@@ -7,18 +7,31 @@ from typing import Optional, TypedDict
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
+from src.admin_client import AdminServiceError
 from src.reservation_validator import ReservationValidator
 
-_REQUIRED_SLOTS = ["name", "surname", "car_number", "period_start", "period_end"]
+_REQUIRED_SLOTS = [
+    "name",
+    "surname",
+    "car_number",
+    "period_start",
+    "period_end",
+]
 
 _INTENT_PROMPT = (
-    "Classify the user's message as exactly one word: 'reservation' if they want to book "
-    "or reserve a parking space, otherwise 'info'. Message: {message}"
+    "Classify the user's message as exactly one word: 'reservation' "
+    "if they want to book or reserve a parking space, otherwise 'info'. "
+    "Message: {message}"
 )
 
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2})")
 _CAR_RE = re.compile(r"\b([A-Z]{1,3}[- ]?\d{3,4}[A-Z]{0,2})\b")
 _WORD_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'’-]+$")
+_STATUS_RE = re.compile(
+    r"\b(?:status|check)\b.*?"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 _RESET_COMMANDS = {
     "cancel",
@@ -38,11 +51,12 @@ class ChatState(TypedDict, total=False):
     response: str
 
 class ParkingChatbot:
-    def __init__(self, settings, rag_chain, database, guardrails):
+    def __init__(self, settings, rag_chain, database, guardrails, admin_client=None):
         self.settings = settings
         self.rag_chain = rag_chain
         self.db = database
         self.guardrails = guardrails
+        self.admin_client = admin_client
         self.validator = ReservationValidator(
             database=database,
             max_duration_hours=settings.max_reservation_hours)
@@ -58,9 +72,14 @@ class ParkingChatbot:
         graph.add_node("route_request", self._route_request)
         graph.add_node("reset_session", self._reset_session)
         graph.add_node("restart_reservation", self._restart_reservation)
+        graph.add_node(
+            "check_reservation_status",
+            self._check_reservation_status)
         graph.add_node("classify_intent", self._classify_intent)
         graph.add_node("answer_info", self._answer_info)
-        graph.add_node("collect_reservation", self._collect_reservation_node)
+        graph.add_node(
+            "collect_reservation",
+            self._collect_reservation_node)
         graph.set_entry_point("route_request")
         graph.add_conditional_edges(
             "route_request",
@@ -69,6 +88,7 @@ class ParkingChatbot:
                 "reset": "reset_session",
                 "restart_reservation": "restart_reservation",
                 "continue_reservation": "collect_reservation",
+                "reservation_status": "check_reservation_status",
                 "classify": "classify_intent"})
 
         graph.add_conditional_edges(
@@ -80,20 +100,25 @@ class ParkingChatbot:
 
         graph.add_edge("reset_session", END)
         graph.add_edge("restart_reservation", END)
+        graph.add_edge("check_reservation_status", END)
         graph.add_edge("answer_info", END)
         graph.add_edge("collect_reservation", END)
         return graph.compile()
 
     def _route_request(self, state):
-        message = state["message"].strip().lower()
+        message = state["message"].strip()
+        normalized = message.lower()
         session_id = state["session_id"]
-        if message in _RESET_COMMANDS:
+
+        if _STATUS_RE.search(message):
+            state["route"] = "reservation_status"
+        elif normalized in _RESET_COMMANDS:
             state["route"] = "reset"
         elif session_id in self._sessions:
-            if self._looks_like_new_reservation_request(message):
-                state["route"] = "restart_reservation"
-            else:
-                state["route"] = "continue_reservation"
+            state["route"] = (
+                "restart_reservation"
+                if self._looks_like_new_reservation_request(normalized)
+                else "continue_reservation")
         else:
             state["route"] = "classify"
 
@@ -109,20 +134,45 @@ class ParkingChatbot:
     def _restart_reservation(self, state):
         session_id = state["session_id"]
         self._sessions[session_id] = {}
-        return self._collect_reservation(state, session_id=session_id)
+        return self._collect_reservation(
+            state,
+            session_id=session_id)
+
+    def _check_reservation_status(self, state):
+        match = _STATUS_RE.search(state["message"])
+        if match is None:
+            state["response"] = (
+                "Please provide the reservation reference.")
+            return state
+
+        reservation = self.db.get_reservation(match.group(1))
+        if reservation is None:
+            state["response"] = "Reservation not found."
+            return state
+
+        state["response"] = (
+            f"Reservation {reservation['id']} is "
+            f"{reservation['status']}.")
+        return state
 
     def _classify_intent(self, state):
         result = self.llm.invoke(
             [
-                SystemMessage(content="You are an intent classifier."),
+                SystemMessage(
+                    content="You are an intent classifier."),
                 HumanMessage(
-                    content=_INTENT_PROMPT.format(message=state["message"]))])
+                    content=_INTENT_PROMPT.format(
+                        message=state["message"]))])
         intent = result.content.strip().lower()
-        state["intent"] = "reservation" if "reservation" in intent else "info"
+        state["intent"] = (
+            "reservation"
+            if "reservation" in intent
+            else "info")
         return state
 
     def _answer_info(self, state):
-        state["response"] = self.rag_chain.answer(state["message"])
+        state["response"] = self.rag_chain.answer(
+            state["message"])
         return state
 
     def _collect_reservation_node(self, state):
@@ -134,14 +184,19 @@ class ParkingChatbot:
         slots = self._sessions.setdefault(session_id, {})
         self._extract_slots(state["message"], slots)
 
-        missing = [slot for slot in _REQUIRED_SLOTS if slot not in slots]
+        missing = [
+            slot
+            for slot in _REQUIRED_SLOTS
+            if slot not in slots]
         if missing:
             state["response"] = self._ask_for_missing(missing)
             state["slots"] = dict(slots)
             return state
 
-        period_start = datetime.fromisoformat(slots["period_start"])
-        period_end = datetime.fromisoformat(slots["period_end"])
+        period_start = datetime.fromisoformat(
+            slots["period_start"])
+        period_end = datetime.fromisoformat(
+            slots["period_end"])
 
         errors = self.validator.validate(
             name=slots["name"],
@@ -152,7 +207,6 @@ class ParkingChatbot:
         if errors:
             for field in errors:
                 slots.pop(field, None)
-
             state["slots"] = dict(slots)
             state["response"] = " ".join(errors.values())
             return state
@@ -165,8 +219,9 @@ class ParkingChatbot:
             slots.pop("period_end", None)
             state["slots"] = dict(slots)
             state["response"] = (
-                "No parking space is available for the requested period. "
-                "Please provide a different start and end date/time.")
+                "No parking space is available for the requested "
+                "period. Please provide a different start and end "
+                "date/time.")
             return state
 
         reservation_id = self.db.create_reservation(
@@ -176,12 +231,31 @@ class ParkingChatbot:
             car_number=slots["car_number"],
             period_start=period_start,
             period_end=period_end)
+        escalation_message = (
+            "The reservation is pending administrator approval.")
+        if self.admin_client is not None:
+            try:
+                self.admin_client.submit_reservation(
+                    reservation_id)
+                self.db.mark_admin_request(
+                    reservation_id,
+                    "sent")
+            except AdminServiceError as exc:
+                self.db.mark_admin_request(
+                    reservation_id,
+                    "failed",
+                    error=str(exc))
+                escalation_message = (
+                    "The reservation was saved, but the administrator "
+                    "service is temporarily unavailable. The request "
+                    "must be retried by an operator.")
 
         state["reservation_id"] = reservation_id
         state["response"] = (
-            f"Thanks {slots['name']}, your reservation request for Zone "
-            f"{parking_space['zone']} has been submitted and is pending administrator "
-            f"approval. Reservation reference: {reservation_id}")
+            f"Thanks {slots['name']}, your reservation request for "
+            f"Zone {parking_space['zone']} was created. "
+            f"{escalation_message} "
+            f"Reservation reference: {reservation_id}")
         self._sessions.pop(session_id, None)
         return state
 
@@ -190,11 +264,12 @@ class ParkingChatbot:
         dates = _DATE_RE.findall(normalized)
 
         if len(dates) >= 2:
-            slots["period_start"] = dates[0].replace("T", " ")
-            slots["period_end"] = dates[1].replace("T", " ")
+            slots["period_start"] = dates[0].replace(
+                "T", " ")
+            slots["period_end"] = dates[1].replace(
+                "T", " ")
         elif len(dates) == 1:
             value = dates[0].replace("T", " ")
-
             if "period_start" not in slots:
                 slots["period_start"] = value
             elif "period_end" not in slots:
@@ -203,8 +278,9 @@ class ParkingChatbot:
         car_match = _CAR_RE.search(normalized.upper())
         if car_match:
             slots["car_number"] = (
-                car_match.group(1).replace(" ", "").replace("-", "")
-            )
+                car_match.group(1)
+                .replace(" ", "")
+                .replace("-", ""))
 
         full_name_match = re.search(
             r"\bmy\s+name\s+is\s+"
@@ -217,24 +293,33 @@ class ParkingChatbot:
             slots["surname"] = full_name_match.group(2).title()
         else:
             name_match = re.search(
-                r"\bname[: ]+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b",
+                r"\bname[: ]+"
+                r"([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b",
                 normalized,
                 re.IGNORECASE)
             if name_match and "name" not in slots:
                 slots["name"] = name_match.group(1).title()
 
             surname_match = re.search(
-                r"\bsurname[: ]+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b",
+                r"\bsurname[: ]+"
+                r"([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b",
                 normalized,
                 re.IGNORECASE)
             if surname_match:
-                slots["surname"] = surname_match.group(1).title()
+                slots["surname"] = (
+                    surname_match.group(1).title())
 
-        parts = [part.strip() for part in normalized.split(",")]
+        parts = [
+            part.strip()
+            for part in normalized.split(",")]
         if len(parts) >= 2:
-            if "name" not in slots and _WORD_RE.fullmatch(parts[0]):
+            if (
+                "name" not in slots
+                and _WORD_RE.fullmatch(parts[0])):
                 slots["name"] = parts[0].title()
-            if "surname" not in slots and _WORD_RE.fullmatch(parts[1]):
+            if (
+                "surname" not in slots
+                and _WORD_RE.fullmatch(parts[1])):
                 slots["surname"] = parts[1].title()
 
         if _WORD_RE.fullmatch(normalized):
@@ -248,10 +333,16 @@ class ParkingChatbot:
             "name": "your first name",
             "surname": "your surname",
             "car_number": "your car registration number",
-            "period_start": "the reservation start date/time (YYYY-MM-DD HH:MM)",
-            "period_end": "the reservation end date/time (YYYY-MM-DD HH:MM)"}
+            "period_start": (
+                "the reservation start date/time "
+                "(YYYY-MM-DD HH:MM)"),
+            "period_end": (
+                "the reservation end date/time "
+                "(YYYY-MM-DD HH:MM)")}
         asks = ", ".join(prompts[slot] for slot in missing)
-        return f"To complete your reservation I still need: {asks}."
+        return (
+            "To complete your reservation I still need: "
+            f"{asks}.")
 
     def _looks_like_new_reservation_request(self, message):
         phrases = (
@@ -269,3 +360,7 @@ class ParkingChatbot:
                 "message": message,
                 "session_id": session_id})
         return result["response"]
+
+    def close(self):
+        if self.admin_client is not None:
+            self.admin_client.close()
