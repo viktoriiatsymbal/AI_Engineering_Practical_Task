@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "citypark_workflow": "./src/orchestration/service.py:make_graph"
+  },
+  "env": "./.env"
+}

@@ -1,0 +1,11 @@
+{
+  "runs_attempted": 3,
+  "runs_successful": 3,
+  "success_rate_percent": 100.0,
+  "information_workflow_latency_seconds": {
+    "mean": 11.3692,
+    "p50": 9.9895,
+    "max": 14.4842
+  },
+  "failures": []
+}

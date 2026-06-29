@@ -1,55 +1,42 @@
-# AI_Engineering_Practical_Task (Stage 3)
+# AI_Engineering_Practical_Task (Stage 4)
 
-Stage 3 extends the RAG chatbot and human-in-the-loop administrator workflow with an MCP server that records approved reservations in a text file
+Stage 4 integrates the RAG chatbot, administrator workflow, and MCP recording service into one LangGraph pipeline
 
 ## Implemented functionality
 
-- RAG chatbot built with LangChain
-- Weaviate for static parking information
-- PostgreSQL for dynamic data, reservations, and administrator reviews
-- PII filtering with Microsoft Presidio
-- LangChain administrator agent with human approval or refusal
-- FastMCP server for recording approved reservations
-- JWT authentication with the `reservations:write` scope
-- Retry, timeout, file locking, atomic index updates, and idempotent writes
+- LangGraph orchestration of all previous stages
+- RAG chatbot with Weaviate, PostgreSQL, and PII filtering
+- Human-in-the-loop administrator approval with `interrupt()` and resume
+- Authenticated MCP recording for approved reservations
+- PostgreSQL workflow checkpoints and history
+- Retry support for failed MCP recording
+- REST API, CLI, integration tests, evaluation, and load testing
 
 ## Workflow
 
 ```text
-User -> RAG chatbot -> Reservation created -> Administrator review -> approved -> Authenticated MCP tool -> approved_reservations.txt
+User -> RAG chatbot -> Reservation created -> Administrator approval -> MCP recording -> Completed
 ```
 
-Refused or unreviewed reservations are not written to the file.
-
-## Output format
-
-```text
-Name Surname | Car Number | Start Time to End Time | Approval Time
-```
-
-Example:
-
-```text
-Anna Ponomarenko | AA5678AA | 2026-07-12T12:00:00 to 2026-07-12T14:00:00 | 2026-07-01T14:44:02+00:00
-```
+Refused reservations are finalized without MCP recording.
 
 ## Project structure (added/changed files)
 
 ```text
 src/
-  chatbot.py                    # user-facing RAG chatbot
-  admin_agent.py                # administrator LangChain agent
-  admin_api.py                  # secured administrator REST API
-  admin_cli.py                  # administrator console
-  mcp_server.py                 # FastMCP server
-  mcp_client.py                 # LangChain MCP adapter client
-  approved_reservation_store.py # text-file storage
-  mcp_token.py                  # JWT generator
-  record_approved.py            # manual retry command
+  orchestration/
+    state.py       # shared workflow state
+    nodes.py       # chatbot, approval, MCP, and finalization nodes
+    routing.py     # conditional routing
+    graph.py       # LangGraph definition
+    service.py     # start, resume, retry, state, and history operations
+  workflow_api.py  # Stage 4 REST API
+  workflow_cli.py  # unified CLI
 evaluation/
-  eval_mcp_workflow.py
-tests/
-storage/
+  eval_orchestrated_workflow.py
+load_tests/
+  locustfile.py
+langgraph.json
 ```
 
 ## Setup
@@ -74,7 +61,7 @@ python -m spacy download en_core_web_lg
 cp .env.example .env
 ```
 
-Fill the credentials in `.env` (use a random secret of at least 32 characters for `MCP_JWT_SECRET`)
+Fill the credentials in `.env`
 
 
 ### 4. Seed PostgreSQL and Weaviate
@@ -115,38 +102,26 @@ Default endpoint: `http://127.0.0.1:8001/mcp`
 uvicorn src.admin_api:app --host 127.0.0.1 --port 8000
 ```
 
-### User chatbot
+### LangGraph workflow API
 
 ```bash
-python -m src.main
+uvicorn src.workflow_api:app --host 127.0.0.1 --port 8002
 ```
 
-### Administrator console
+### Unified workflow CLI
 
 ```bash
-python -m src.admin_cli
+python -m src.workflow_cli
 ```
 
-Available commands:
+Main API endpoints:
 
 ```text
-list
-list pending
-list all
-open <reservation-id>
-quit
-```
-
-After the administrator approves a reservation, the administrator agent invokes the authenticated MCP tool and writes the record to:
-
-```text
-storage/approved_reservations.txt
-```
-
-A failed MCP write can be retried without duplicating the entry:
-
-```bash
-python -m src.record_approved <reservation-id>
+POST /workflows
+POST /workflows/{workflow_id}/admin-decision
+POST /workflows/{workflow_id}/retry
+GET  /workflows/{workflow_id}
+GET  /workflows/{workflow_id}/history
 ```
 
 ## Tests
@@ -155,30 +130,43 @@ python -m src.record_approved <reservation-id>
 python -m pytest -v
 ```
 
-The Stage 3 contains 74 automated tests covering the chatbot, guardrails, database, administrator workflow, MCP authentication/integration, file formatting, and idempotency.
+The complete project contains 88 automated tests covering all four stages and the integrated workflow.
 
 ## Evaluation
 
-Run the MCP workflow evaluation while PostgreSQL, the administrator API, and the MCP server are available:
-
 ```bash
-python -m evaluation.eval_mcp_workflow
+python -m evaluation.eval_orchestrated_workflow
 ```
 
-The generated report is saved to:
+Results are stored in:
 
 ```text
-evaluation/results/mcp_workflow_results.json
+evaluation/results/stage4_results.json
 ```
 
-Stage 1 RAG and Stage 2 administrator workflow results are retained under `evaluation/results/`.
+Latest run:
 
-## Security
+- 3/3 successful workflows
+- 100% success rate
+- Mean latency: 11.3692 s
+- P50 latency: 9.9895 s
+- Maximum latency: 14.4842 s
 
-- The MCP endpoint requires a signed HS256 JWT
-- The token must contain the `reservations:write` scope
-- The server verifies that the reservation was approved before writing
-- Reservation IDs are stored in a separate index to prevent duplicate writes
-- File locking protects concurrent writes
-- The index is replaced atomically, and the text file is flushed with `fsync`
-- The MCP client uses configurable timeout and retry settings
+## Load testing
+
+Start the workflow API, then run:
+
+```bash
+locust -f load_tests/locustfile.py --host http://127.0.0.1:8002
+```
+
+Open `http://127.0.0.1:8089` to run the test.
+
+## Reliability and security
+
+- Administrator actions require a bearer token
+- MCP writes require a scoped JWT
+- Approved reservations only are written to storage
+- PostgreSQL checkpoints preserve workflow state
+- Failed MCP steps can be retried without repeating previous steps
+- Idempotent recording prevents duplicate entries

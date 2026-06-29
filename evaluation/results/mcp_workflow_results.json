@@ -1,0 +1,11 @@
+{
+  "runs_attempted": 3,
+  "runs_successful": 3,
+  "success_rate_percent": 100.0,
+  "mcp_recording_latency": {
+    "mean_seconds": 0.6597162639955059,
+    "p50_seconds": 0.6353157919365913,
+    "max_seconds": 0.7208465840667486
+  },
+  "failures": []
+}
