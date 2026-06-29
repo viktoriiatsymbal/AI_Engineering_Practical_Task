@@ -1,0 +1,37 @@
+[
+  {
+    "id": "general-1",
+    "category": "general",
+    "text": "Our parking facility, CityPark, offers secure covered and open-air parking spaces in the city center, with 24/7 CCTV surveillance and on-site security staff."
+  },
+  {
+    "id": "location-1",
+    "category": "location",
+    "text": "CityPark is located at 12 Market Street, downtown, two minutes' walk from the central train station and accessible from the main ring road."
+  },
+  {
+    "id": "booking-1",
+    "category": "booking_process",
+    "text": "No identity documents are required for a reservation. Customers only need to provide their name, surname, car registration number, and reservation period with the start and end date/time. Every reservation remains pending until it is confirmed by a parking administrator."
+  },
+  {
+    "id": "booking-2",
+    "category": "booking_process",
+    "text": "Reservations can be cancelled free of charge up to 2 hours before the reservation start time. Cancellations after that may incur a one-hour cancellation fee."
+  },
+  {
+    "id": "details-1",
+    "category": "parking_details",
+    "text": "CityPark has four zones: A (standard), B (covered), C (long-term), and VIP (closest to the entrance, with valet option). Each zone has different hourly pricing."
+  },
+  {
+    "id": "details-2",
+    "category": "parking_details",
+    "text": "Electric vehicle charging stations are available in Zone B. Disabled parking spaces are available in Zone A near the main entrance."
+  },
+  {
+    "id": "policy-1",
+    "category": "policy",
+    "text": "CityPark does not share customer personal data with third parties. Reservation details are only used for confirming and managing the parking reservation."
+  }
+]
