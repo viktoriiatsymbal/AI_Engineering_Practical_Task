@@ -4,7 +4,7 @@ LangChain tools for administrator agent
 import json
 from langchain.tools import tool
 
-def build_admin_tools(database):
+def build_admin_tools(database, mcp_recorder=None):
     @tool
     def get_reservation_details(reservation_id):
         """Read one reservation and its current review status."""
@@ -21,6 +21,9 @@ def build_admin_tools(database):
             reservation_id=reservation_id,
             decision="approved",
             comment=comment or None)
+        if mcp_recorder is not None:
+            result["mcp_recording"] = mcp_recorder.record(reservation_id)
+
         return json.dumps(result, default=str)
 
     @tool

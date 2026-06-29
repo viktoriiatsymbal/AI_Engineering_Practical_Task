@@ -1,48 +1,55 @@
-# AI_Engineering_Practical_Task (Stage 2)
+# AI_Engineering_Practical_Task (Stage 3)
 
-Stage 2 extends the Stage 1 RAG chatbot with a LangChain administrator agent and a human-in-the-loop approval workflow
+Stage 3 extends the RAG chatbot and human-in-the-loop administrator workflow with an MCP server that records approved reservations in a text file
 
 ## Implemented functionality
 
-- RAG chatbot for parking information and reservation data collection
-- Weaviate for static knowledge and PostgreSQL for dynamic data
-- PII guardrails with Presidio
-- Automatic escalation of completed reservation requests to the administrator API
-- LangChain administrator agent with approve/refuse tools
-- Human confirmation before any reservation status change
-- Persistent workflow state with LangGraph `PostgresSaver`
-- Token-protected REST API and administrator CLI
-- Automated tests and workflow evaluation
+- RAG chatbot built with LangChain
+- Weaviate for static parking information
+- PostgreSQL for dynamic data, reservations, and administrator reviews
+- PII filtering with Microsoft Presidio
+- LangChain administrator agent with human approval or refusal
+- FastMCP server for recording approved reservations
+- JWT authentication with the `reservations:write` scope
+- Retry, timeout, file locking, atomic index updates, and idempotent writes
 
 ## Workflow
 
 ```text
-User -> RAG chatbot -> reservation created -> administrator API
-     -> LangChain admin agent -> human confirmation -> approved/refused
+User -> RAG chatbot -> Reservation created -> Administrator review -> approved -> Authenticated MCP tool -> approved_reservations.txt
 ```
 
-The administrator agent cannot change reservation data directly. It proposes either `approve_reservation` or `refuse_reservation`, and the action is executed only after explicit human confirmation
+Refused or unreviewed reservations are not written to the file.
+
+## Output format
+
+```text
+Name Surname | Car Number | Start Time to End Time | Approval Time
+```
+
+Example:
+
+```text
+Anna Ponomarenko | AA5678AA | 2026-07-12T12:00:00 to 2026-07-12T14:00:00 | 2026-07-01T14:44:02+00:00
+```
 
 ## Project structure (added/changed files)
 
 ```text
 src/
-├── admin_agent.py      # LangChain agent and HITL middleware
-├── admin_api.py        # protected administrator REST API
-├── admin_cli.py        # administrator console
-├── admin_client.py     # chatbot-to-admin API integration
-├── admin_tools.py      # approve/refuse tools
-├── chatbot.py          # stage 1 chatbot with escalation
-└── database.py         # reservations and review persistence
-
-data/
-└── stage2_migration.sql
-
+  chatbot.py                    # user-facing RAG chatbot
+  admin_agent.py                # administrator LangChain agent
+  admin_api.py                  # secured administrator REST API
+  admin_cli.py                  # administrator console
+  mcp_server.py                 # FastMCP server
+  mcp_client.py                 # LangChain MCP adapter client
+  approved_reservation_store.py # text-file storage
+  mcp_token.py                  # JWT generator
+  record_approved.py            # manual retry command
 evaluation/
-├── eval_admin_workflow.py
-└── results/
-
+  eval_mcp_workflow.py
 tests/
+storage/
 ```
 
 ## Setup
@@ -67,41 +74,60 @@ python -m spacy download en_core_web_lg
 cp .env.example .env
 ```
 
-Fill the credentials in `.env`.
+Fill the credentials in `.env` (use a random secret of at least 32 characters for `MCP_JWT_SECRET`)
 
-### 4. Initialise data
 
-```bash
-python -m src.ingest
-```
-
-For an existing Stage 1 database, apply the Stage 2 migration:
+### 4. Seed PostgreSQL and Weaviate
 
 ```bash
-psql "$DATABASE_URL" -f data/stage2_migration.sql
+python -m src.ingest --reset
 ```
 
-## Running the application
+### 5. Generate an MCP access token
 
-Start the administrator API:
+```bash
+python -m src.mcp_token
+```
+
+Copy the generated JWT into `.env`:
+
+```env
+MCP_ACCESS_TOKEN=<generated-token>
+```
+
+The generated token is short-lived. Generate a new one if the MCP server returns `401 Unauthorized`.
+
+## Run
+
+Open separate terminals with the virtual environment activated.
+
+### MCP server
+
+```bash
+python -m src.mcp_server
+```
+
+Default endpoint: `http://127.0.0.1:8001/mcp`
+
+### Administrator API
 
 ```bash
 uvicorn src.admin_api:app --host 127.0.0.1 --port 8000
 ```
 
-Start the user chatbot in another terminal:
+### User chatbot
 
 ```bash
 python -m src.main
 ```
 
-Start the administrator console in a third terminal:
+### Administrator console
 
 ```bash
 python -m src.admin_cli
 ```
 
-Administrator commands:
+Available commands:
 
 ```text
 list
@@ -111,53 +137,16 @@ open <reservation-id>
 quit
 ```
 
-## API endpoints
+After the administrator approves a reservation, the administrator agent invokes the authenticated MCP tool and writes the record to:
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/health` | Service health check |
-| `POST` | `/admin/requests` | Escalate a reservation |
-| `GET` | `/admin/requests` | List review requests |
-| `GET` | `/admin/requests/{reservation_id}` | Read one request |
-| `POST` | `/admin/commands` | Ask the agent to propose approve/refuse |
-| `POST` | `/admin/decisions` | Confirm or reject the proposed action |
-
-Administrator endpoints require:
-
-```http
-Authorization: Bearer <ADMIN_API_TOKEN>
+```text
+storage/approved_reservations.txt
 ```
 
-## Evaluation
-
-Run the Stage 2 workflow evaluation while the administrator API is running:
+A failed MCP write can be retried without duplicating the entry:
 
 ```bash
-python -m evaluation.eval_admin_workflow
-```
-
-Recorded result:
-
-| Metric | Result |
-|---|---:|
-| Runs attempted | 3 |
-| Runs successful | 3 |
-| Success rate | 100% |
-| Mean escalation latency | 1.451 s |
-| Mean agent proposal latency | 4.296 s |
-| Mean HITL resume latency | 3.666 s |
-
-Raw results are stored in:
-
-```text
-evaluation/results/admin_workflow_results.json
-```
-
-Stage 1 RAG evaluation remains available in:
-
-```text
-evaluation/results/evaluation_report.md
-evaluation/results/evaluation_results.json
+python -m src.record_approved <reservation-id>
 ```
 
 ## Tests
@@ -166,12 +155,30 @@ evaluation/results/evaluation_results.json
 python -m pytest -v
 ```
 
-The test suite covers the chatbot, database, RAG, guardrails, administrator API, client, tools, CLI, persistent HITL agent and end-to-end approve/refuse flows.
+The Stage 3 contains 74 automated tests covering the chatbot, guardrails, database, administrator workflow, MCP authentication/integration, file formatting, and idempotency.
+
+## Evaluation
+
+Run the MCP workflow evaluation while PostgreSQL, the administrator API, and the MCP server are available:
+
+```bash
+python -m evaluation.eval_mcp_workflow
+```
+
+The generated report is saved to:
+
+```text
+evaluation/results/mcp_workflow_results.json
+```
+
+Stage 1 RAG and Stage 2 administrator workflow results are retained under `evaluation/results/`.
 
 ## Security
 
-- Administrator endpoints require a bearer token
-- Secrets are loaded from `.env` and must not be committed
-- Side-effecting administrator tools require explicit human confirmation
-- Reservation IDs and data are validated against PostgreSQL instead of being generated by the agent
-- PII filtering from Stage 1 remains enabled
+- The MCP endpoint requires a signed HS256 JWT
+- The token must contain the `reservations:write` scope
+- The server verifies that the reservation was approved before writing
+- Reservation IDs are stored in a separate index to prevent duplicate writes
+- File locking protects concurrent writes
+- The index is replaced atomically, and the text file is flushed with `fsync`
+- The MCP client uses configurable timeout and retry settings

@@ -37,9 +37,20 @@ class Settings:
     admin_api_token: str
     admin_api_timeout_seconds: float
 
+    mcp_server_url: str
+    mcp_access_token: str
+    mcp_jwt_secret: str
+    mcp_jwt_issuer: str
+    mcp_jwt_audience: str
+    mcp_timeout_seconds: float
+    mcp_retry_attempts: int
+    mcp_host: str
+    mcp_port: int
+    mcp_output_file: str
+    mcp_index_file: str
+
     @property
     def postgres_dsn(self):
-        """SQLAlchemy DSN used by the Stage 1/2 application database."""
         return URL.create(
             drivername="postgresql+psycopg2",
             username=self.postgres_user,
@@ -50,8 +61,7 @@ class Settings:
             query={"sslmode": self.postgres_sslmode})
 
     @property
-    def postgres_checkpoint_dsn(self) -> str:
-        """psycopg3 DSN required by LangGraph's persistent PostgresSaver."""
+    def postgres_checkpoint_dsn(self):
         url = URL.create(
             drivername="postgresql",
             username=self.postgres_user,
@@ -85,4 +95,15 @@ def load_settings():
             "http://127.0.0.1:8000").rstrip("/"),
         admin_api_token=_require("ADMIN_API_TOKEN"),
         admin_api_timeout_seconds=float(
-            os.getenv("ADMIN_API_TIMEOUT_SECONDS", "10")))
+            os.getenv("ADMIN_API_TIMEOUT_SECONDS", "10"))
+        mcp_server_url=os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8001/mcp").rstrip("/"),
+        mcp_access_token=os.getenv("MCP_ACCESS_TOKEN", ""),
+        mcp_jwt_secret=_require("MCP_JWT_SECRET"),
+        mcp_jwt_issuer=os.getenv("MCP_JWT_ISSUER", "citypark-auth"),
+        mcp_jwt_audience=os.getenv("MCP_JWT_AUDIENCE", "citypark-mcp"),
+        mcp_timeout_seconds=float(os.getenv("MCP_TIMEOUT_SECONDS", "15")),
+        mcp_retry_attempts=int(os.getenv("MCP_RETRY_ATTEMPTS", "3")),
+        mcp_host=os.getenv("MCP_HOST", "127.0.0.1"),
+        mcp_port=int(os.getenv("MCP_PORT", "8001")),
+        mcp_output_file=os.getenv("MCP_OUTPUT_FILE", "storage/approved_reservations.txt"),
+        mcp_index_file=os.getenv("MCP_INDEX_FILE", "storage/approved_reservations.index.json"))

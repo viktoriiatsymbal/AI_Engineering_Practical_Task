@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from src.admin_agent import AdminApprovalAgent
 from src.config import load_settings
 from src.database import Database
+from src.mcp_client import MCPReservationRecorder
 
 class ReservationEscalationRequest(BaseModel):
     reservation_id: str
@@ -39,7 +40,9 @@ def create_app(settings=None, database=None, admin_agent=None):
             admin_agent
             or AdminApprovalAgent(
                 settings=resolved_settings,
-                database=resolved_database))
+                database=resolved_database,
+                mcp_recorder=MCPReservationRecorder(
+                    resolved_settings)))
 
         try:
             yield
@@ -61,7 +64,7 @@ def create_app(settings=None, database=None, admin_agent=None):
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "stage": 2}
+        return {"status": "ok", "stage": 3}
 
     @app.post(
         "/admin/requests",

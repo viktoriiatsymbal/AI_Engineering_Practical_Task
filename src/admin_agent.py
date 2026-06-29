@@ -50,7 +50,7 @@ def force_admin_action_tool(request, handler):
     return handler(request)
 
 class AdminApprovalAgent:
-    def __init__(self, settings, database, checkpointer=None):
+    def __init__(self, settings, database, checkpointer=None, mcp_recorder=None):
         self.settings = settings
         self.database = database
         self._checkpointer_cm = None
@@ -62,7 +62,8 @@ class AdminApprovalAgent:
             checkpointer.setup()
 
         self.checkpointer = checkpointer
-        all_tools = build_admin_tools(database)
+        all_tools = build_admin_tools(
+            database, mcp_recorder=mcp_recorder)
 
         self.tools = [
             tool

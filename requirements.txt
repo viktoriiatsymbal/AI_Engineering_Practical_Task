@@ -12,7 +12,7 @@ numpy==1.26.4
 packaging==24.2
 typer==0.25.1
 cryptography==49.0.0
-python-dotenv==1.0.1
+python-dotenv>=1.1,<2
 pytest==8.3.3
 pytest-mock==3.14.0
 tenacity==9.0.0
@@ -22,3 +22,8 @@ httpx>=0.28,<1
 langgraph-checkpoint-postgres>=3,<4
 psycopg[binary,pool]>=3.2,<4
 httpx2>=2.5,<3
+fastmcp==3.4.2
+websockets>=14,<16
+langchain-mcp-adapters>=0.3,<1
+PyJWT>=2.10,<3
+filelock>=3.16,<4
